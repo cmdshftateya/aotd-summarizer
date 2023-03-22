@@ -1,0 +1,176 @@
+#! /usr/bin/env python3
+
+import re
+from datetime import datetime
+import csv
+from argparse import ArgumentParser
+
+
+def cleaner(filename):
+    # Define the characters to be removed
+    chars_to_remove = ['\u200d', '\u200e', '\u202a', '\u202c', '\xa0', '\U0001fae1']
+
+    # Open the input file and read its contents
+    with open(filename, 'r', encoding='utf-8') as file:
+        input_text = file.read()
+
+    # Remove the specified characters from the input text
+    for char in chars_to_remove:
+        input_text = input_text.replace(char, '')
+
+    # Open the output file and write the modified text to it
+    with open(filename, 'w', encoding='utf-8') as file:
+        file.write(input_text)
+
+def combiner(filename):
+    with open(filename, 'r') as file:
+        contents = file.readlines()
+
+    pattern = r'\[(\d+/\d+/\d+, \d+:\d+:\d+ [AP]M)\]'
+    messages = []
+
+    for x in contents:
+        if re.match(pattern, x):
+            messages.append(x.rstrip('\n'))
+        else:
+            messages[-1] += x
+    return messages
+
+def separator(msgs):
+    messages = []
+    for msg in msgs:
+        try:
+            timestamp_str, content = msg.split("] ")
+            date_str, time_str = timestamp_str[1:].split(", ")
+            timestamp = datetime.strptime(date_str, "%m/%d/%y")
+            sender, message = content.split(": ")
+            messages.append({
+                "timestamp": timestamp.strftime("%Y-%m-%d"),
+                "sender": sender,
+                "message": message
+            })
+        except ValueError:
+            # Skip the message if it has an unexpected format
+            continue
+    return messages
+
+def ayah_finder(messages):
+    ayah_messages = []
+    ayah_text = "Ayah of the Day, "
+    for message in messages:
+        if ayah_text in message['message']:
+            ayah_messages.append(message)
+    return ayah_messages
+
+def msg_debugger(ayahs):
+    for ayah in ayahs:
+        print(ayah['message'].split("\n"))
+        # for x in ayah['message'].split("\n"):
+        #     if x == "":
+        #         print("empty")
+        #     else: 
+        #         print(x)
+
+def is_english_char(char):
+    """
+    Returns True if the given character is in English, False otherwise.
+    """
+    if ord(char) < 128:
+        return True
+    else:
+        return False
+    
+def msg_splitter(ayahs):
+    output = []
+    for ayah in ayahs[1:]:
+        # print(ayah["message"])
+        message_parts = ayah['message'].split('\n')
+        # index 0 will always be the date. we do not need this
+        # defining variables for use:
+        surah_name = ""
+        ayah_number = ""
+        arabic = ""
+        english = ""
+        for part in message_parts:
+            # loop to check for surah name line
+            if part == "":
+                pass
+            elif "Sura" in part or part[0].isnumeric():
+                # if the line starts with "Sura", it is the line with the name and number
+                name_number_line = part
+                if ',' in part:
+                    surah_name = name_number_line.split(",")[0]
+                    ayah_number = name_number_line.split(",")[1]
+                elif ":" in part:
+                    surah_name = name_number_line.split(":")[0]
+                    ayah_number = name_number_line.split(":")[1]
+            elif not is_english_char(part[0]):
+                # if the line isn't in english, then it is the quran arabic verse
+                arabic = part
+            elif is_english_char(part[0]):
+                if "Translation" in part or "In this ayah" in part:
+                    pass
+                elif part != "":
+                    english = part
+                else:
+                    pass
+            else:
+                pass
+        ayah['message'] = {
+            "name": surah_name,
+            "number": ayah_number,
+            "arabic": arabic,
+            "english": english
+        }
+        output.append(ayah)
+        # print(ayah['message'])
+    return output  
+
+def date_format(date):
+    date_string = date
+    date_obj = datetime.strptime(date_string, '%Y-%m-%d')
+    formatted_date = date_obj.strftime('%B %-d')
+    return formatted_date
+
+def ayahs_writer(split_ayahs, filename):
+    with open(filename, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Date', 'Surah Name', 'Ayah Number', 'Arabic Text', 'English Text'])
+        for ayah in split_ayahs:
+            # print(ayah)
+            if isinstance(ayah, dict):
+                pass
+            else:
+                continue
+            date = date_format(ayah['timestamp'])
+            surah = ayah['message']['name']
+            ayah_num = ayah['message']['number']
+            arabic = ayah['message']['arabic']
+            english = ayah['message']['english']
+            writer.writerow([date, surah, ayah_num, arabic, english])
+
+def main():
+    # TODO: put this back after debugging
+    parser = ArgumentParser()
+    parser.add_argument('--chat', required=True, type=str, help='File path to exported WhatsApp chat as .txt file.')
+    parser.add_argument('--outfile', required=True, type=str, help='File path to exported .csv file with ayahs of the day.')
+    args = parser.parse_args()
+
+    # clean file
+    cleaner(args.chat)
+    # combine multi-line messages
+    combined = combiner(args.chat)
+    # separate message contents
+    separated = separator(combined)
+    # get ayahs of the day
+    ayahs = ayah_finder(separated)
+    # stratify ayah contents
+    stratified = msg_splitter(ayahs)
+    # print(stratified)
+    # for x in stratified:
+    #     print(x)
+    # write to file
+    ayahs_writer(stratified, args.outfile)
+
+if __name__ == '__main__':
+    main()
